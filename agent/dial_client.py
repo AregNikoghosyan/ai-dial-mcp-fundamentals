@@ -26,23 +26,30 @@ class DialClient:
 
         for delta in tool_deltas:
             idx = delta.index
-            if delta.id: tool_dict[idx]["id"] = delta.id
-            if delta.function.name: tool_dict[idx]["function"]["name"] = delta.function.name
-            if delta.function.arguments: tool_dict[idx]["function"]["arguments"] += delta.function.arguments
-            if delta.type: tool_dict[idx]["type"] = delta.type
+
+            if delta.id:
+                tool_dict[idx]["id"] = delta.id
+
+            if delta.function.name:
+                tool_dict[idx]["function"]["name"] = delta.function.name
+
+            if delta.function.arguments:
+                tool_dict[idx]["function"]["arguments"] += delta.function.arguments
+
+            if delta.type:
+                tool_dict[idx]["type"] = delta.type
 
         return list(tool_dict.values())
 
     async def _stream_response(self, messages: list[Message]) -> Message:
         """Stream OpenAI response and handle tool calls"""
+
         stream = await self.openai.chat.completions.create(
-            **{
-                "model": "gpt-4o",
-                "messages": [msg.to_dict() for msg in messages],
-                "tools": self.tools,
-                "temperature": 0.0,
-                "stream": True
-            }
+            model="gpt-4o",
+            messages=[msg.to_dict() for msg in messages],
+            tools=self.tools,
+            temperature=0.0,
+            stream=True
         )
 
         content = ""
@@ -53,7 +60,6 @@ class DialClient:
         async for chunk in stream:
             delta = chunk.choices[0].delta
 
-            # Stream content
             if delta.content:
                 print(delta.content, end="", flush=True)
                 content += delta.content
@@ -62,6 +68,7 @@ class DialClient:
                 tool_deltas.extend(delta.tool_calls)
 
         print()
+
         return Message(
             role=Role.AI,
             content=content,
@@ -70,22 +77,45 @@ class DialClient:
 
     async def get_completion(self, messages: list[Message]) -> Message:
         """Process user query with streaming and tool calling"""
-        ai_message: Message = await self._stream_response(messages)
 
-        # Check if any tool calls are present and perform them
+        ai_message = await self._stream_response(messages)
+
         if ai_message.tool_calls:
             messages.append(ai_message)
+
             await self._call_tools(ai_message, messages)
-            # recursively calling agent with tool messages
+
             return await self.get_completion(messages)
 
         return ai_message
 
     async def _call_tools(self, ai_message: Message, messages: list[Message]):
         """Execute tool calls using MCP client"""
-        #TODO:
-        # 1. Iterate through tool_calls
-        # 2. Get tool name and tool arguments (arguments is a JSON, don't forget about that)
-        # 3. Wrap into try/except block and call mcp_client tool call. If succeed then add tool message (don't forget
-        #    about tool call id), otherwise add tool message with error message (it kind of fallback strategy).
-        raise NotImplementedError()
+
+        for tool_call in ai_message.tool_calls:
+
+            tool_name = tool_call["function"]["name"]
+            tool_args_json = tool_call["function"]["arguments"]
+
+            try:
+                tool_args = json.loads(tool_args_json) if tool_args_json else {}
+
+                result = await self.mcp_client.call_tool(tool_name, tool_args)
+
+                messages.append(
+                    Message(
+                        role=Role.TOOL,
+                        content=str(result),
+                        tool_call_id=tool_call["id"]
+                    )
+                )
+
+            except Exception as e:
+
+                messages.append(
+                    Message(
+                        role=Role.TOOL,
+                        content=f"Tool execution failed: {str(e)}",
+                        tool_call_id=tool_call["id"]
+                    )
+                )

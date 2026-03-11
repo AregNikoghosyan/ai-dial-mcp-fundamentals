@@ -8,6 +8,7 @@ from models.user_info import UserUpdate, UserCreate
 USER_SERVICE_ENDPOINT = os.getenv("USERS_MANAGEMENT_SERVICE_URL", "http://localhost:8041")
 
 class UserClient:
+    
 
     def __user_to_string(self, user: dict[str, Any]):
         user_str = "```\n"
